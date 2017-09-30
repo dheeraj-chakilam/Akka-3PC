@@ -7,18 +7,35 @@ type RoomState = {
     actors: Set<IActorRef>
     master: IActorRef option
     messages: List<string>
-    beatmap: Map<string,IActorRef*int64>
+    beatmap: Map<string,Member*IActorRef*int64>
 }
+
+and Member =
+    | Participant
+    | Coordinator
 
 type RoomMsg =
     | Join of IActorRef
     | JoinMaster of IActorRef
-    | Heartbeat of string * IActorRef * int64
+    | Heartbeat of string * Member * IActorRef * int64
     | Alive of int64 * string
     | Broadcast of string
     | Rebroadcast of string
     | Get
+    | VoteReq
+    | VoteReply of VoteMsg
+    | PreCommit
+    | AckPreCommit
+    | Decision of DecisionMsg
     | Leave of IActorRef
+
+and DecisionMsg =
+    | Abort
+    | Commit
+
+and VoteMsg =
+    | Yes
+    | No
 
 let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
     let rec loop state = actor {
@@ -37,17 +54,17 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
         | JoinMaster ref ->
             return! loop { state with master = Some ref }
 
-        | Heartbeat (id, ref, ms) ->
-            printfn "heartbeat %s" id
-            return! loop { state with beatmap = state.beatmap |> Map.add id (ref,ms) }
+        | Heartbeat (id, memb, ref, lastMs) ->
+            //printfn "heartbeat %s" id
+            return! loop { state with beatmap = state.beatmap |> Map.add id (memb, ref,lastMs) }
 
         | Alive (currMs, selfID) ->
             match state.master with
             | Some m -> 
                 let aliveList =
                     state.beatmap
-                    |> Map.filter (fun _ (_, ms) -> currMs - ms < aliveThreshold)
-                    |> Map.add selfID (Unchecked.defaultof<_>, Unchecked.defaultof<_>)
+                    |> Map.filter (fun _ (_,_, ms) -> currMs - ms < aliveThreshold)
+                    |> Map.add selfID (Unchecked.defaultof<_>, Unchecked.defaultof<_>, Unchecked.defaultof<_>)
                     |> Map.toList
                     |> List.map (fun (id,_) -> id)
                 m <! (sprintf "alive %s" (System.String.Join(",",aliveList)))
@@ -55,7 +72,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
 
             return! loop state
 
-        | Broadcast text -> 
+        | Broadcast text -> //This message is from the master
             state.actors
             |> Set.iter (fun a -> a <! (sprintf "rebroadcast %s" text))
             

@@ -34,8 +34,11 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                 | [| "rebroadcast"; message |] ->
                     world <! Rebroadcast (message.Trim())
             
-                | [| "heartbeat"; message |] ->
-                    world <! Heartbeat (message.Trim(), mailbox.Self, sw.ElapsedMilliseconds)
+                | [| "participant"; message |] ->
+                    world <! Heartbeat (message.Trim(), Participant, mailbox.Self, sw.ElapsedMilliseconds)
+
+                | [| "coordinator"; message |] ->
+                    world <! Heartbeat (message.Trim(), Coordinator, mailbox.Self, sw.ElapsedMilliseconds)
 
                 | [| "quit" |] ->
                     world <! Leave mailbox.Self
