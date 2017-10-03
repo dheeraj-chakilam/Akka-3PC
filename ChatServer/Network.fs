@@ -40,15 +40,22 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                 | [| "coordinator"; message |] ->
                     world <! Heartbeat (message.Trim(), Coordinator, mailbox.Self, sw.ElapsedMilliseconds)
 
+                | [| "add"; message |] ->
+                    let [| name; url |] = message.Trim().Split([|' '|], 2)
+                    world <! AddSong (SongName name, Url url)
+                
+                | [| "get"; message |] ->
+                    world <! GetSong (SongName <| message.Trim())
+                
+                | [| "delete"; message |] ->
+                    world <! DeleteSong (SongName <| message.Trim())
+                
                 | [| "quit" |] ->
                     world <! Leave mailbox.Self
                     mailbox.Context.Stop mailbox.Self
             
                 | [| "alive" |] ->
                     world <! Alive (sw.ElapsedMilliseconds, string selfID)
-            
-                | [| "get" |] ->
-                    world <! Get
             
                 | _ ->
                     connection <! Tcp.Write.Create (ByteString.FromString <| sprintf "Invalid request. (%A)\n" data)) lines
@@ -91,8 +98,10 @@ let server world serverType port selfID max (mailbox: Actor<obj>) =
         return! loop()
     }
 
+    // Start listening on port for connections
     mailbox.Context.System.Tcp() <! Tcp.Bind(mailbox.Self, IPEndPoint(IPAddress.Any, port),options=[Inet.SO.ReuseAddress(true)])
 
+    // If a chatserver, try to connect to all the other ports (only once on startup)
     if serverType = ChatServer then
         let clientPortList = seq {0 .. max} |> Seq.filter (fun n -> n <> int selfID) |> Seq.map (fun n -> 20000 + n)
         for p in clientPortList do
