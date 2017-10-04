@@ -3,6 +3,8 @@
 open Akka.FSharp
 open Akka.Actor
 
+//TODO: Need 3PCState - Aborted, Unknown, Committable, Commited
+//TODO: Need an iteration count
 type RoomState = {
     actors: Set<IActorRef>
     coordinator: Option<string * IActorRef>
@@ -51,15 +53,16 @@ and UpdateType =
     | Add
     | Delete
 
-let scheduleRepeatedly (mailbox:Actor<_>) rate actorRef message =
-    mailbox.Context.System.Scheduler.ScheduleTellRepeatedly(
+let scheduleRepeatedly (actor:Actor<_>) rate actorRef message =
+    // Add cancelability
+    actor.Context.System.Scheduler.ScheduleTellRepeatedly(
         System.TimeSpan.FromMilliseconds 0.,
         System.TimeSpan.FromMilliseconds rate,
         actorRef,
         message)
 
-let scheduleOnce (mailbox:Actor<_>) after actorRef message =
-    mailbox.Context.System.Scheduler.ScheduleTellOnce(
+let scheduleOnce (actor:Actor<_>) after actorRef message =
+    actor.Context.System.Scheduler.ScheduleTellOnce(
         System.TimeSpan.FromMilliseconds after,
         actorRef,
         message)
@@ -100,10 +103,12 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                                   | Participant -> state.coordinator }
 
         | DetermineCoordinator ->
+            //TODO Remove print statements
+            //TODO Should we just read the DTLog?
             return! loop {
                 state with
                     coordinator = match state.coordinator with
-                                  | None -> printfn "%s is the coordinator" selfID; Some (selfID, sender) 
+                                  | None -> printfn "%s is the coordinator" selfID; Some (selfID, mailbox.Self) 
                                   | _ -> printfn "%A is the coordinator" state.coordinator; state.coordinator }
 
 
@@ -130,7 +135,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
         | Rebroadcast text ->
             return! loop { state with messages = text :: state.messages }
 
-        | Get (SongName name) ->
+        | GetSong (SongName name) ->
             let url =
                 state.songList
                 |> Map.tryFind name
@@ -149,5 +154,10 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
         | Leave ref ->
             return! loop { state with actors = Set.remove ref state.actors }
     }
+
+    // If after 1s, the coordinator hasn't been decided, set itself as the coordinator
+    scheduleOnce mailbox 3000. mailbox.Self DetermineCoordinator
     
+    // TODO: Read from DTLog
+
     loop { actors = Set.empty ; coordinator = None; master = None ; messages = []; beatmap = Map.empty; songList = Map.empty }
