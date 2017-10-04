@@ -7,16 +7,26 @@ open Akka.Actor
 //TODO: Need an iteration count
 type RoomState = {
     actors: Set<IActorRef>
-    coordinator: Option<string * IActorRef>
+    coordinator: IActorRef option
     master: IActorRef option
     messages: List<string>
     beatmap: Map<string,Member*IActorRef*int64>
     songList: Map<string, string>
+    commitState: CommitState
+    commitIter: int
 }
 
 and Member =
     | Participant
     | Coordinator
+
+and CommitState =
+    | Start
+    | FirstTime
+    | CoordWaiting
+    | CoordInitCommit
+    | CoordCommitable
+    | CoordCommitted
 
 type RoomMsg =
     | Join of IActorRef
@@ -53,19 +63,21 @@ and UpdateType =
     | Add
     | Delete
 
-let scheduleRepeatedly (actor:Actor<_>) rate actorRef message =
-    // Add cancelability
-    actor.Context.System.Scheduler.ScheduleTellRepeatedly(
+let scheduleRepeatedly (sender:Actor<_>) rate actorRef message =
+
+    sender.Context.System.Scheduler.ScheduleTellRepeatedlyCancelable(
         System.TimeSpan.FromMilliseconds 0.,
         System.TimeSpan.FromMilliseconds rate,
         actorRef,
-        message)
+        message,
+        sender.Self)
 
-let scheduleOnce (actor:Actor<_>) after actorRef message =
-    actor.Context.System.Scheduler.ScheduleTellOnce(
+let scheduleOnce (sender:Actor<_>) after actorRef message =
+    sender.Context.System.Scheduler.ScheduleTellOnceCancelable(
         System.TimeSpan.FromMilliseconds after,
         actorRef,
-        message)
+        message,
+        sender.Self)
 
 let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
     let rec loop state = actor {
@@ -73,20 +85,32 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
         //    state.beatmap
         //    |> Map.filter (fun _ (_,_, ms) -> currMs - ms < aliveThreshold)
 
+        let cancellation = ref (Cancelable.CreateCanceled())
+
+        let startCoordinatorHeartbeat actorRef =
+                (!cancellation).Cancel()
+                cancellation :=
+                    scheduleRepeatedly mailbox beatrate actorRef (sprintf "coordinator %s" selfID)
+                
+        let startParticipantHeartbeat actorRef =
+                (!cancellation).Cancel()
+                cancellation :=
+                    scheduleRepeatedly mailbox beatrate actorRef (sprintf "participant %s" selfID)
+
         let! msg = mailbox.Receive()
         let sender = mailbox.Sender()
 
         match msg with
         | Join ref ->
-            //TODO: Send song list
-            //TODO: Make the heartbeats cancellable
+            //TODO: Send song list if needed
+            //TODO: Observer heartbeat
             match state.coordinator with
             | None ->
-                scheduleRepeatedly mailbox beatrate ref (sprintf "coordinator %s" selfID)
-            | Some (id, _) when id = selfID ->
-                scheduleRepeatedly mailbox beatrate ref (sprintf "coordinator %s" selfID)
-            | Some (id, _) when id <> selfID ->
-                scheduleRepeatedly mailbox beatrate ref (sprintf "participant %s" selfID)
+                startCoordinatorHeartbeat ref
+            | Some ref when ref = mailbox.Self ->
+                startCoordinatorHeartbeat ref
+            | Some ref ->
+                startParticipantHeartbeat ref
             
             return! loop { state with actors = Set.add ref state.actors }
 
@@ -99,17 +123,20 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                 state with
                     beatmap = state.beatmap |> Map.add id (memb, ref, lastMs) ;
                     coordinator = match memb with
-                                  | Coordinator -> Some (id, ref)
+                                  | Coordinator -> Some ref
                                   | Participant -> state.coordinator }
 
         | DetermineCoordinator ->
-            //TODO Remove print statements
-            //TODO Should we just read the DTLog?
+            //TODO: Remove print statements
             return! loop {
                 state with
                     coordinator = match state.coordinator with
-                                  | None -> printfn "%s is the coordinator" selfID; Some (selfID, mailbox.Self) 
-                                  | _ -> printfn "%A is the coordinator" state.coordinator; state.coordinator }
+                                  | None -> printfn "%s is the coordinator" selfID
+                                            Option.iter (fun m -> m <! sprintf "coordinator %s" selfID) state.master
+                                            Some mailbox.Self
+                                  | _ -> printfn "%A is the coordinator" state.coordinator
+                                         state.coordinator ;
+                    commitState = CoordWaiting }
 
 
         | Alive (currMs, selfID) ->
@@ -155,9 +182,19 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             return! loop { state with actors = Set.remove ref state.actors }
     }
 
-    // If after 1s, the coordinator hasn't been decided, set itself as the coordinator
+    //TODO: Check if DT Log exists
+
+    // If DT Log doesn't exist, try to determine whether a coordinator exists
     scheduleOnce mailbox 3000. mailbox.Self DetermineCoordinator
     
     // TODO: Read from DTLog
 
-    loop { actors = Set.empty ; coordinator = None; master = None ; messages = []; beatmap = Map.empty; songList = Map.empty }
+    loop {
+        actors = Set.empty ;
+        coordinator = None ;
+        master = None ;
+        messages = [] ;
+        beatmap = Map.empty ;
+        songList = Map.empty ;
+        commitState = Start ;
+        commitIter = 1 }
