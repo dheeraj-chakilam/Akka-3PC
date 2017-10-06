@@ -60,7 +60,7 @@ type RoomMsg =
     | VoteReplyTimeout
     | AckPreCommit of IActorRef
     | AckPreCommitTimeout
-    | VoteReq of Update * List<string>
+    | VoteReq of Update
     | PreCommit
     | PreCommitTimeout
     | Decision of DecisionMsg
@@ -205,27 +205,54 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             return! loop state'
 
         | AddSong (name, url) ->
+            let state' =
+                if (String.length url > int selfID + 5) then
+                    { state with
+                        commitState = CoordAborted }
+                else
+                    // Current process is the coordinator
+                    // Get a snapshot of the upSet
+                    let upSet = getAliveMap ()
+                    let upListIds =
+                        upSet
+                        |> Map.toList
+                        |> List.map (fun (id, _) -> id)
+            
+                    // Initiate 3PC with all alive participants by sending VoteReq
+                    upSet
+                    |> Map.iter (fun _ r -> r <! (sprintf "votereq add %s %s" name url))
+            
+                    // Wait for Votes or Timeout
+                    setTimeout VoteReplyTimeout
+                    |> ignore
+                    { state with
+                        commitState = CoordInitCommit (Add (name,url))
+                        upSet = upSet}
+            
+            return! loop state'
+
+        | DeleteSong name ->
             // Current process is the coordinator
             // Get a snapshot of the upSet
-            let upSet = getAliveMap ()
-            let upListIds =
+            let state' =
+                let upSet = getAliveMap ()
+                let upListIds =
+                    upSet
+                    |> Map.toList
+                    |> List.map (fun (id, _) -> id)
+            
+                // Initiate 3PC with all alive participants by sending VoteReq
                 upSet
-                |> Map.toList
-                |> List.map (fun (id, _) -> id)
+                |> Map.iter (fun _ r -> r <! (sprintf "votereq delete %s" name))
             
-            // Initiate 3PC with all alive participants by sending VoteReq
-            // TODO: Maintain this songname and url
-            upSet
-            |> Map.iter (fun _ r -> r <! (sprintf "votereq add %s %s %A" name url upListIds))
+                // Wait for Votes or Timeout
+                setTimeout VoteReplyTimeout
+                |> ignore
+                { state with
+                    commitState = CoordInitCommit (Delete name)
+                    upSet = upSet}  
             
-            // Wait for Votes or Timeout
-            setTimeout VoteReplyTimeout
-            |> ignore
-            
-            return! loop {
-                state with
-                    commitState = CoordInitCommit (Add (name,url))
-                    upSet = upSet}
+            return! loop state'
         
         | VoteReply vote ->
             let state' =
@@ -311,10 +338,9 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             state.ackSet
             |> Set.iter (fun ref -> ref <! "commit")
 
-        | VoteReq (update, upListIds) ->
+        | VoteReq update ->
             let upSet =
-                state.beatmap
-                |> Map.filter (fun id _ -> List.exists (fun upId -> upId = id) upListIds)
+                getAliveMap ()
             // TODO: should votereq contain the coordinator ref?
             // Decide vote according to the rule
             let vote =
