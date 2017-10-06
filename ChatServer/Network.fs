@@ -48,6 +48,14 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                     | [| "add"; name; url; upSet |] -> world <! VoteReq (Add (name, url))
                     | [| "delete"; name; upSet |] -> world <! VoteReq (Delete name)
                     | _ -> failwith "Invalid votereq"
+
+                | [| "votereply"; message |] -> 
+                    if ((message.Trim()) = "Yes") then
+                        world <! VoteReply (VoteMsg Yes)
+                    else
+                        world <! VoteReply (VoteMsg No)
+
+
                 
                 | [| "crash" |] ->
                     world <! Leave mailbox.Self
