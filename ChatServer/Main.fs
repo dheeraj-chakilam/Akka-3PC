@@ -5,7 +5,7 @@ open World
 open Network
 
 let beatrate = 100.
-let aliveThreshold = 1000L
+let aliveThreshold = 5000L
 
 let config =
     (Akka.Configuration.ConfigurationFactory.ParseString

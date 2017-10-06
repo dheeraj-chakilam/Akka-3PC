@@ -45,15 +45,16 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
 
                 | [| "votereq"; message |] ->
                     match message.Trim().Split([|' '|]) with
-                    | [| "add"; name; url; upSet |] -> world <! VoteReq (Add (name, url))
-                    | [| "delete"; name; upSet |] -> world <! VoteReq (Delete name)
+                    | [| "add"; name; url |] -> world <! VoteReq (Add (name, url))
+                    | [| "delete"; name |] -> world <! VoteReq (Delete name)
                     | _ -> failwith "Invalid votereq"
 
                 | [| "votereply"; message |] -> 
-                    if ((message.Trim()) = "Yes") then
-                        world <! VoteReply (Yes, mailbox.Self)
-                    else
-                        world <! VoteReply (No, mailbox.Self)
+                    match message.Trim() with
+                    | m when m = "yes" -> world <! VoteReply (Yes, mailbox.Self)
+                    | m when m = "no" -> world <! VoteReply (No, mailbox.Self)
+                    | _ ->
+                        failwith "Invalid votereply"
                 
                 | [| "precommit" |] ->
                     world <! PreCommit
@@ -101,7 +102,7 @@ let server world serverType port selfID max (mailbox: Actor<obj>) =
             printf "Listening on %O\n" bound.LocalAddress
 
         | :? Tcp.Connected as connected -> 
-            printf "%O: %O connected to the server\n" serverType connected.RemoteAddress
+            printf "%O connected as %O\n" connected.RemoteAddress serverType
             let handlerName = "handler_" + connected.RemoteAddress.ToString().Replace("[", "").Replace("]", "")
             let handlerRef = spawn mailbox handlerName (handler world serverType selfID sender)
             sender <! Tcp.Register handlerRef
