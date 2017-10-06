@@ -51,9 +51,9 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
 
                 | [| "votereply"; message |] -> 
                     if ((message.Trim()) = "Yes") then
-                        world <! VoteReply (Yes)
+                        world <! VoteReply (Yes, mailbox.Self)
                     else
-                        world <! VoteReply (No)                
+                        world <! VoteReply (No, mailbox.Self)
                 
                 | [| "precommit" |] ->
                     world <! PreCommit
