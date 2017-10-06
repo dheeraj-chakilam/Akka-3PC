@@ -1,4 +1,5 @@
 .idea/
+.vs/
 *.iml
 docs/build/
 test_output/
