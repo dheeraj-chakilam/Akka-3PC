@@ -198,7 +198,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                         match state.master with
                         | Some m -> m <! sprintf "coordinator %s" selfID
                         | None -> failwith "ERROR: No master in DetermineCoordinator"
-                        { state with coordinator = Some mailbox.Self; commitState = CoordWaiting }
+                        startCoordinatorHeartbeat { state with coordinator = Some mailbox.Self; commitState = CoordWaiting }
                     else
                         state
                 | _ ->
@@ -473,13 +473,14 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
 
     //TODO: Check if somebody is alive and ask for state
     //TODO: Decide what the state transmission should contain
-    scheduleOnce mailbox aliveThreshold mailbox.Self RequestFullState
-    |> ignore
+    //scheduleOnce mailbox aliveThreshold mailbox.Self RequestFullState
+    //|> ignore
 
     //TODO: Check if DT Log exists if nobody is alive
 
     // Concurrently, try to determine whether a coordinator exists
-    scheduleOnce mailbox aliveThreshold mailbox.Self DetermineCoordinator
+    // TODO: Replace 3000 with parameter
+    scheduleOnce mailbox 3000L mailbox.Self DetermineCoordinator
     |> ignore
     
     // TODO: Read from DTLog

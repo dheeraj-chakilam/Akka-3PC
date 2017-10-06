@@ -101,7 +101,7 @@ let server world serverType port selfID max (mailbox: Actor<obj>) =
             printf "Listening on %O\n" bound.LocalAddress
 
         | :? Tcp.Connected as connected -> 
-            printf "%O connected to the server\n" connected.RemoteAddress
+            printf "%O: %O connected to the server\n" serverType connected.RemoteAddress
             let handlerName = "handler_" + connected.RemoteAddress.ToString().Replace("[", "").Replace("]", "")
             let handlerRef = spawn mailbox handlerName (handler world serverType selfID sender)
             sender <! Tcp.Register handlerRef
