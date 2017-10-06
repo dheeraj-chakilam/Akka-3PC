@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-The master program for CS5414 project 0
+The master program for CS5414 three phase commit project.
 """
 
 import os
@@ -11,8 +11,11 @@ import time
 from socket import SOCK_STREAM, socket, AF_INET
 from threading import Thread
 
+leader = -1  # coordinator
 address = 'localhost'
-threads = {}  # ends up keeping track of who is alive
+threads = {}
+live_list = {}
+crash_later = []
 wait_ack = False
 
 
@@ -27,29 +30,32 @@ class ClientHandler(Thread):
         self.process = process
 
     def run(self):
-        global threads, wait_ack
+        global leader, threads, wait_ack
         while self.valid:
             if "\n" in self.buffer:
                 (l, rest) = self.buffer.split("\n", 1)
                 self.buffer = rest
                 s = l.split()
-                if s[0] == 'messages':
-                    sys.stdout.write(l + '\n')
+                if len(s) < 2:
+                    continue
+                if s[0] == 'coordinator':
+                    leader = int(s[1])
+                    wait_ack = False
+                elif s[0] == 'resp':
+                    sys.stdout.write(s[1] + '\n')
                     sys.stdout.flush()
                     wait_ack = False
-                elif s[0] == 'alive':
-                    sys.stdout.write(l + '\n')
-                    sys.stdout.flush()
+                elif s[0] == 'ack':
                     wait_ack = False
                 else:
-                    print "Invalid Response: " + l
+                    print s
             else:
                 try:
                     data = self.sock.recv(1024)
                     # sys.stderr.write(data)
                     self.buffer += data
                 except:
-                    # print sys.exc_info()
+                    print sys.exc_info()
                     self.valid = False
                     del threads[self.index]
                     self.sock.close()
@@ -57,7 +63,10 @@ class ClientHandler(Thread):
 
     def kill(self):
         if self.valid:
-            os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+            try:
+                os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+            except:
+                pass
             self.close()
 
     def send(self, s):
@@ -72,22 +81,8 @@ class ClientHandler(Thread):
             pass
 
 
-def kill(index):
-    global wait_ack, threads
-    wait = wait_ack
-    while wait:
-        time.sleep(0.01)
-        wait = wait_ack
-    pid = int(index)
-    if pid >= 0:
-        if pid not in threads:
-            print 'Master or testcase error!'
-            return
-        threads[pid].kill()
-
-
 def send(index, data, set_wait_ack=False):
-    global threads, wait_ack
+    global leader, live_list, threads, wait_ack
     wait = wait_ack
     while wait:
         time.sleep(0.01)
@@ -101,35 +96,40 @@ def send(index, data, set_wait_ack=False):
             wait_ack = True
         threads[pid].send(data)
         return
-
+    pid = leader
+    while pid not in live_list or live_list[pid] == False:
+        time.sleep(0.01)
+        pid = leader
     if set_wait_ack:
         wait_ack = True
     threads[pid].send(data)
 
 
-def exit(force=False):
+def exit(exit=False):
     global threads, wait_ack
+
     wait = wait_ack
-    wait = wait and (not force)
+    wait = wait and (not exit)
     while wait:
         time.sleep(0.01)
         wait = wait_ack
 
+    time.sleep(2)
     for k in threads:
-        kill(k)
-    subprocess.Popen(['./stopall'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
+        threads[k].kill()
+    subprocess.Popen(['./stopall'], stdout=open('/dev/null'), stderr=open('/dev/null'))
     time.sleep(0.1)
-    sys.exit(0)
+    os._exit(0)
 
 
 def timeout():
-    time.sleep(60)
-    print 'Timeout!'
+    global wait_ack
+    time.sleep(120)
     exit(True)
 
 
 def main(debug=False):
-    global threads, wait_ack
+    global leader, threads, crash_later, wait_ack
     timeout_thread = Thread(target=timeout, args=())
     timeout_thread.setDaemon(True)
     timeout_thread.start()
@@ -140,14 +140,9 @@ def main(debug=False):
             line = sys.stdin.readline()
         except:  # keyboard exception, such as Ctrl+C/D
             exit(True)
-
         if line == '':  # end of a file
             exit()
-
         line = line.strip()  # remove trailing '\n'
-        if line == '':  # prompt again if just whitespace
-            continue
-
         if line == 'exit':  # exit when reading 'exit' command
             exit()
 
@@ -157,10 +152,6 @@ def main(debug=False):
             print "Invalid command: " + line
             exit(True)
 
-        if sp1[0] == 'sleep':  # sleep command
-            time.sleep(float(sp1[1]) / 1000)
-            continue
-
         try:
             pid = int(sp2[0])  # first field is pid
         except ValueError:
@@ -169,17 +160,17 @@ def main(debug=False):
 
         cmd = sp2[1]  # second field is command
         if cmd == 'start':
-            try:
-                port = int(sp2[3])
-            except ValueError:
-                print "Invalid port: " + sp2[3]
-                exit(True)
+            port = int(sp2[3])
+            # if no leader is assigned, set the first process as the leader
+            if leader == -1:
+                leader = pid
+            live_list[pid] = True
 
             if debug:
                 process = subprocess.Popen(['./process', str(pid), sp2[2], sp2[3]], preexec_fn=os.setsid)
             else:
                 process = subprocess.Popen(['./process', str(pid), sp2[2], sp2[3]], stdout=open('/dev/null', 'w'),
-                                           stderr=open('/dev/null', 'w'), preexec_fn=os.setsid)
+                    stderr=open('/dev/null', 'w'), preexec_fn=os.setsid)
 
             # sleep for a while to allow the process be ready
             time.sleep(3)
@@ -188,15 +179,26 @@ def main(debug=False):
             handler = ClientHandler(pid, address, port, process)
             threads[pid] = handler
             handler.start()
-        elif cmd == 'get' or cmd == 'alive':
+        elif cmd == 'get':
             send(pid, sp1[1], set_wait_ack=True)
-        elif cmd == 'broadcast':
-            send(pid, sp1[1])
+        elif cmd == 'add' or cmd == 'delete':
+            send(pid, sp1[1], set_wait_ack=True)
+            for c in crash_later:
+                live_list[c] = False
+            crash_later = []
         elif cmd == 'crash':
-            kill(pid)
-            time.sleep(1)  # sleep for a bit so that crash is detected
-        else:
-            print "Invalid command: " + line
+            send(pid, sp1[1])
+            if pid == -1:
+                pid = leader
+            live_list[pid] = False
+        elif cmd[:5] == 'crash':
+            send(pid, sp1[1])
+            if pid == -1:
+                pid = leader
+            crash_later.append(pid)
+        elif cmd == 'vote':
+            send(pid, sp1[1])
+        time.sleep(2)
 
 
 if __name__ == '__main__':
