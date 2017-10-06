@@ -29,21 +29,27 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                 | [| "coordinator"; message |] ->
                     world <! Heartbeat (message.Trim(), Coordinator, mailbox.Self)
                 
-                | [| "observer"; message|] ->
+                | [| "observer"; message |] ->
                     world <! Heartbeat (message.Trim(), Observer, mailbox.Self)
 
                 | [| "add"; message |] ->
                     match message.Trim().Split([|' '|], 2) with
                     | [| name; url |] -> world <! AddSong (name, url)
-                    | _ -> printfn "Invalid AddSong request\n"
+                    | _ -> failwith "Invalid add song request"
                 
                 | [| "get"; message |] ->
                     world <! GetSong (message.Trim())
                 
                 | [| "delete"; message |] ->
                     world <! DeleteSong (message.Trim())
+
+                | [| "votereq"; message |] ->
+                    match message.Trim().Split([|' '|]) with
+                    | [| "add"; name; url; upSet |] -> world <! VoteReq (Add (name, url))
+                    | [| "delete"; name; upSet |] -> world <! VoteReq (Delete name)
+                    | _ -> failwith "Invalid votereq"
                 
-                | [| "quit" |] ->
+                | [| "crash" |] ->
                     world <! Leave mailbox.Self
                     mailbox.Context.Stop mailbox.Self
             

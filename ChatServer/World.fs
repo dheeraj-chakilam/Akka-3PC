@@ -2,7 +2,6 @@
 
 open Akka.FSharp
 open Akka.Actor
-open System.Security.Policy
 
 //TODO: Need 3PCState - Aborted, Unknown, Committable, Commited
 //TODO: Need an iteration count
@@ -61,7 +60,7 @@ type RoomMsg =
     | VoteReplyTimeout
     | AckPreCommit of IActorRef
     | AckPreCommitTimeout
-    | VoteReq of Update * Set<string>
+    | VoteReq of Update * List<string>
     | PreCommit
     | PreCommitTimeout
     | Decision of DecisionMsg
@@ -168,8 +167,10 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             // TODO: Change behaviour? Maybe just make every alive process send state on join
             let aliveRef =
                 state.beatmap
-                |> Map.pick (fun _ (_, ref, lastMs) -> if (lastMs < aliveThreshold) then Some ref else None)
-            aliveRef <! "FullStateRequest"
+                |> Map.tryPick (fun _ (_, ref, lastMs) -> if (lastMs < aliveThreshold) then Some ref else None)
+            match aliveRef with
+            | Some ref -> ref <! "FullStateRequest"
+            | None -> failwith "ERROR: Ref not found in beatmap in RequestFullState"
 
         | FullStateRequest ref ->
             //TODO: send more state
@@ -207,11 +208,15 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             // Current process is the coordinator
             // Get a snapshot of the upSet
             let upSet = getAliveMap ()
+            let upListIds =
+                upSet
+                |> Map.toList
+                |> List.map (fun (id, _) -> id)
             
             // Initiate 3PC with all alive participants by sending VoteReq
             // TODO: Maintain this songname and url
             upSet
-            |> Map.iter (fun id r -> r <! (sprintf "votereq add %s %s %A" name url upSet))
+            |> Map.iter (fun _ r -> r <! (sprintf "votereq add %s %s %A" name url upListIds))
             
             // Wait for Votes or Timeout
             setTimeout VoteReplyTimeout
@@ -306,7 +311,10 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             state.ackSet
             |> Set.iter (fun ref -> ref <! "commit")
 
-        | VoteReq (update, upSet) ->
+        | VoteReq (update, upListIds) ->
+            let upSet =
+                state.beatmap
+                |> Map.filter (fun id _ -> List.exists (fun upId -> upId = id) upListIds)
             // TODO: should votereq contain the coordinator ref?
             // Decide vote according to the rule
             let vote =
@@ -325,7 +333,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             let state' = startParticipantHeartbeat {
                 state with
                     commitState = ParticipantInitCommit update
-                    upSet = state.upSet}
+                    upSet = upSet}
             
             // Wait for precommit or timeout
             setTimeout PreCommitTimeout
@@ -369,14 +377,14 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                                 songList = Map.add name url state.songList
                                 commitIter = state.commitIter + 1
                                 commitState = ParticipantCommitted
-                                upSet = Map.empty}
+                                upSet = Map.empty }
                     | ParticipantCommitable (Delete name) ->
                         startObserverHeartbeat {
                             state with
                                 songList = Map.remove name state.songList
                                 commitIter = state.commitIter + 1
                                 commitState = ParticipantCommitted
-                                upSet = Map.empty}
+                                upSet = Map.empty }
                     | _ -> failwith "ERROR: Invalid commit state in Decision"
              
             return! loop state'
