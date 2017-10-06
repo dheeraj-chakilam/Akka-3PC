@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# Kill all process and mono instances
+killall -9 process
+killall -9 xterm
+killall -9 mono
+killall -9 python
