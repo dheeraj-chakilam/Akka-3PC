@@ -11,11 +11,6 @@ type Server =
     | ChatServer
     | MasterServer
 
-let sw =
-    let sw = Stopwatch()
-    sw.Start()
-    sw
-
 let handler world serverType selfID connection (mailbox: Actor<obj>) =  
     let rec loop connection = actor {
         let! msg = mailbox.Receive()
@@ -28,34 +23,29 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                 let data = line.Split([|' '|], 2)
 
                 match data with
-                | [| "broadcast"; message |] ->
-                    world <! Broadcast (message.Trim())
-
-                | [| "rebroadcast"; message |] ->
-                    world <! Rebroadcast (message.Trim())
-            
                 | [| "participant"; message |] ->
-                    world <! Heartbeat (message.Trim(), Participant, mailbox.Self, sw.ElapsedMilliseconds)
+                    world <! Heartbeat (message.Trim(), Participant, mailbox.Self)
 
                 | [| "coordinator"; message |] ->
-                    world <! Heartbeat (message.Trim(), Coordinator, mailbox.Self, sw.ElapsedMilliseconds)
+                    world <! Heartbeat (message.Trim(), Coordinator, mailbox.Self)
+                
+                | [| "observer"; message|] ->
+                    world <! Heartbeat (message.Trim(), Observer, mailbox.Self)
 
                 | [| "add"; message |] ->
-                    let [| name; url |] = message.Trim().Split([|' '|], 2)
-                    world <! AddSong (SongName name, Url url)
+                    match message.Trim().Split([|' '|], 2) with
+                    | [| name; url |] -> world <! AddSong (name, url)
+                    | _ -> printfn "Invalid AddSong request\n"
                 
                 | [| "get"; message |] ->
-                    world <! GetSong (SongName <| message.Trim())
+                    world <! GetSong (message.Trim())
                 
                 | [| "delete"; message |] ->
-                    world <! DeleteSong (SongName <| message.Trim())
+                    world <! DeleteSong (message.Trim())
                 
                 | [| "quit" |] ->
                     world <! Leave mailbox.Self
                     mailbox.Context.Stop mailbox.Self
-            
-                | [| "alive" |] ->
-                    world <! Alive (sw.ElapsedMilliseconds, string selfID)
             
                 | _ ->
                     connection <! Tcp.Write.Create (ByteString.FromString <| sprintf "Invalid request. (%A)\n" data)) lines
