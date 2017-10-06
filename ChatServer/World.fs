@@ -122,7 +122,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             |> Map.map (fun id (_,ref,_) -> ref)
         
         // Sends a message to self after the timeout threshold
-        let setTimeout message =
+        let setTimeout (message: RoomMsg) =
             scheduleOnce mailbox aliveThreshold mailbox.Self message
             |> ignore
 
@@ -214,11 +214,14 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             // Current process is the coordinator
             let state' =
                 if (String.length url > int selfID + 5) then
+                    printfn "Aborted because the url doesn't satisfy the length condition"
                     { state with
                         commitState = CoordAborted }
                 else
+                    printfn "Trying to get alive map"
                     // Get a snapshot of the upSet
                     let upSet = getAliveMap ()
+                    printfn "The upSet is %O" upSet
                     let upListIds =
                         upSet
                         |> Map.toList
@@ -227,9 +230,10 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                     // Initiate 3PC with all alive participants by sending VoteReq
                     upSet
                     |> Map.iter (fun _ r -> r <! (sprintf "votereq add %s %s" name url))
-            
+                    
+                    printfn "Before Vote reply timeout"
                     // Wait for Votes or Timeout
-                    setTimeout VoteReplyTimeout
+                    setTimeout <| VoteReplyTimeout state.commitIter
                     |> ignore
                     { state with
                         commitState = CoordInitCommit (Add (name,url))
@@ -252,7 +256,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                 |> Map.iter (fun _ r -> r <! (sprintf "votereq delete %s" name))
             
                 // Wait for Votes or Timeout
-                setTimeout VoteReplyTimeout
+                setTimeout <| VoteReplyTimeout state.commitIter
                 |> ignore
                 { state with
                     commitState = CoordInitCommit (Delete name)
@@ -272,7 +276,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                         printfn "Received all votes"
                         state.upSet
                         |> Map.iter (fun _ ref -> ref <! "precommit")
-                        setTimeout AckPreCommitTimeout
+                        setTimeout <| AckPreCommitTimeout state.commitIter
                         match state.commitState with
                         | CoordInitCommit decision ->
                             { state with 
@@ -307,8 +311,40 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                 match state.commitState with
                 | CoordInitCommit decision when sourceIter = state.commitIter ->
                     if Set.count state.voteSet = Map.count state.upSet then
-                        failwith "In VoteReplyTimeout but have already received all votes. Should've handled this case in VoteReply."
+                        // If the coordinator is the only server alive, just commit the decision
+                        printfn "Since there is no participant, just decide commit for self"
+                        if (Map.count state.upSet) = 0 then
+                            match state.commitState with
+                            | CoordInitCommit decision ->
+                                // Send a commit to master
+                                match state.master with
+                                | Some m ->
+                                    printfn "Sending a commit to master"
+                                    m <! "ack commit"
+                                | None ->
+                                    printfn "WARNING: No master"
+                                match decision with
+                                | (Add (name, url)) ->
+                                    { state with
+                                        songList = Map.add name url state.songList
+                                        commitIter = state.commitIter + 1
+                                        commitState = CoordCommitted
+                                        upSet = Map.empty }
+                                | (Delete name) ->
+                                    { state with
+                                        songList = Map.remove name state.songList
+                                        commitIter = state.commitIter + 1
+                                        commitState = CoordCommitted
+                                        upSet = Map.empty }
+                            | _ ->
+                                printfn "WARNING: Invalid state in VoteReplyTimeout -> upSet = 0"
+                                state
+                        else
+                            printfn "In VoteReplyTimeout but have already received all votes."
+                            state
                     else
+                        // We did not receive all vote replies
+                        printfn "Didn't receive all vote replies"
                         state.upSet
                         |> Map.iter (fun _ ref -> ref <! "abort")
                         match state.master with
@@ -409,7 +445,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             let state' =
                 if vote then
                     // Wait for precommit or timeout
-                    setTimeout PreCommitTimeout
+                    setTimeout <| PreCommitTimeout state.commitIter
                     { state with
                         commitState = ParticipantInitCommit update
                         upSet = upSet }
@@ -434,7 +470,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                         upSet = state.upSet}
             
                 // Wait for commit or timeout
-                setTimeout CommitTimeout
+                setTimeout <| CommitTimeout state.commitIter
             
                 return! loop state'
             | _ ->
