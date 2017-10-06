@@ -410,9 +410,9 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                 if vote then
                     // Wait for precommit or timeout
                     setTimeout PreCommitTimeout
-                    {state with
+                    { state with
                         commitState = ParticipantInitCommit update
-                        upSet = upSet}
+                        upSet = upSet }
                 else
                     startObserverHeartbeat {
                         state with
