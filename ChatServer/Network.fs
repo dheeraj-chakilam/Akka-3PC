@@ -51,16 +51,25 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
 
                 | [| "votereply"; message |] -> 
                     if ((message.Trim()) = "Yes") then
-                        world <! VoteReply (VoteMsg Yes)
+                        world <! VoteReply (Yes)
                     else
-                        world <! VoteReply (VoteMsg No)
+                        world <! VoteReply (No)                
+                
+                | [| "precommit" |] ->
+                    world <! PreCommit
+                
+                | [| "ackprecommit" |] -> 
+                    world <! AckPreCommit mailbox.Self
+                
+                | [| "commit" |] ->
+                    world <! Decision Commit
 
-
+                | [| "abort" |] ->
+                    world <! Decision Abort 
                 
                 | [| "crash" |] ->
-                    world <! Leave mailbox.Self
-                    mailbox.Context.Stop mailbox.Self
-            
+                    System.Environment.Exit(0)
+        
                 | _ ->
                     connection <! Tcp.Write.Create (ByteString.FromString <| sprintf "Invalid request. (%A)\n" data)) lines
     
