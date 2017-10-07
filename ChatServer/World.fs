@@ -114,7 +114,13 @@ let scheduleOnce (sender:Actor<_>) after actorRef message =
         message,
         sender.Self)
 
-let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
+let delayExit time =
+    async {
+        do! Async.Sleep (int time)
+        exit(0) }
+    |> Async.StartImmediate
+
+let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
     let rec loop state = actor {
 
         // Cancel all previously set heartbeats and start anew
@@ -156,7 +162,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
 
         // Sends a message to self after the timeout threshold
         let setTimeout (message: RoomMsg) =
-            scheduleOnce mailbox (aliveThreshold/2L) mailbox.Self message
+            scheduleOnce mailbox timeout mailbox.Self message
             |> ignore
 
         let initiateElectionProtocol state =
@@ -321,7 +327,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                         upSet
                         |> Map.filter (fun id _ -> Set.contains id crashSet)
                         |> Map.iter (fun _ r -> r <! (sprintf "votereq add %s %s" name url))
-                        System.Environment.Exit(0)
+                        delayExit beatrate
                     | _ ->
                         // Initiate 3PC with all alive participants by sending VoteReq
                         upSet
@@ -369,14 +375,15 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                         let voteSet' = Set.add ref voteSet
                         // Check if we've received all votes
                         if Set.count voteSet' = Map.count upSet then
-                            printfn "Received all votes"
+                            //printfn "Received all votes"
                             match state.crash with
                             | Some (CrashPartialPreCommit crashSet) ->
+                                //printfn "About to send partial precommits.\n The crashSet is %O\n The upSet is %O" crashSet upSet
                                 upSet
                                 |> Map.filter (fun id _ -> Set.contains id crashSet) 
                                 |> Map.iter (fun _ ref -> ref <! "precommit")
                                 setTimeout <| AckPreCommitTimeout state.commitIter
-                                System.Environment.Exit(0)
+                                delayExit beatrate
                             | _ ->
                                 upSet
                                 |> Map.iter (fun _ ref -> ref <! "precommit")
@@ -467,7 +474,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                                 upSet
                                 |> Map.filter (fun id _ -> Set.contains id crashSet)
                                 |> Map.iter (fun _ ref -> ref <! "commit")
-                                System.Environment.Exit(0)
+                                delayExit beatrate
                             | _ ->
                                 ackSet'
                                 |> Set.iter (fun ref -> ref <! "commit")
@@ -514,7 +521,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                                 |> Map.filter (fun _ ref -> Set.contains ref ackSet)
                                 |> Map.filter (fun id _ -> Set.contains id crashSet)
                                 |> Map.iter (fun _ ref -> ref <! "commit")
-                                System.Environment.Exit(0)
+                                delayExit beatrate
                             | _ ->
                                 ackSet
                                 |> Set.iter (fun ref -> ref <! "commit")
@@ -661,7 +668,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
         | VoteReq update ->
             
             match state.crash with
-            | Some CrashBeforeVote -> System.Environment.Exit(0)
+            | Some CrashBeforeVote -> delayExit beatrate
             | _ -> ()
 
             printfn "Received VoteReq on iteration %i" state.commitIter
@@ -685,7 +692,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             | None -> failwith "No coordinator in VoteReq"
 
             match state.crash with
-            | Some CrashAfterVote -> System.Environment.Exit(0)
+            | Some CrashAfterVote -> delayExit beatrate
             | _ -> ()
 
             let state' =
@@ -710,7 +717,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                 printfn "ERROR: No Coordinator in PreCommit"
 
             match state.crash with
-            | Some CrashAfterAck -> System.Environment.Exit(0)
+            | Some CrashAfterAck -> delayExit beatrate
             | _ -> ()
 
             let state' =
@@ -742,8 +749,13 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                         printfn "Detected Dead Coordinator"
                         initiateElectionProtocol state
                     else
-                        printfn "Detected that coordinator still alive"
-                        state
+                        printfn "Detected that coordinator still alive %O" state.coordinator
+                        match state.commitPhase with
+                        | ParticipantInitCommit _ ->
+                            setTimeout <| PreCommitTimeout sourceIter
+                            state
+                        | _ ->
+                            state
                 | None ->
                     printfn "WARNING: Received a VoteRequest without a coordinator"
                     state

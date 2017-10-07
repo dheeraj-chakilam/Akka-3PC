@@ -6,6 +6,7 @@ open Network
 
 let beatrate = 10.
 let aliveThreshold = 100L
+let timeout = 50L
 
 let config =
     (Akka.Configuration.ConfigurationFactory.ParseString
@@ -19,7 +20,7 @@ let main argv =
     match argv with
     | [|id; n; port|] ->
         let system = System.create "system" config
-        let roomRef = spawn system "room" (room id beatrate aliveThreshold)
+        let roomRef = spawn system "room" (room id beatrate aliveThreshold timeout)
         let serverRef = spawn system "server" (server roomRef ChatServer (20000 + int id) (int id) (int n))
         let mServerRef = spawn system "master-server" (server roomRef MasterServer (int port) (int id) (int n))
         ()
