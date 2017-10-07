@@ -72,25 +72,40 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                     System.Environment.Exit(0)
                 
                 | [| "crashAfterVote" |] ->
-                    ()
+                    world <! SetCrashAfterVote
 
                 | [| "crashBeforeVote" |] ->
-                    ()
+                    world <! SetCrashBeforeVote
 
                 | [| "crashAfterAck" |] ->
-                    ()
+                    world <! SetCrashAfterAck
+                
+                | [| "crashVoteREQ" |] ->
+                    world <! SetCrashVoteReq Set.empty
 
                 | [| "crashVoteREQ"; message |] ->
-                    ()
+                    let idSet =
+                        message.Trim().Split([|' '|])
+                        |> Set.ofArray
+                    world <! SetCrashVoteReq idSet
 
+                | [| "crashPartialPreCommit"|] -> 
+                    world <! SetCrashPartialPreCommit Set.empty
+                
                 | [| "crashPartialPreCommit"; message |] -> 
                     let idSet =
                         message.Trim().Split([|' '|])
                         |> Set.ofArray
-                    world <! CrashPartialPreCommit
+                    world <! SetCrashPartialPreCommit idSet
 
+                | [| "crashPartialCommit" |] ->
+                    world <! SetCrashPartialCommit Set.empty
+                
                 | [| "crashPartialCommit"; message |] ->
-                    ()
+                    let idSet =
+                        message.Trim().Split([|' '|])
+                        |> Set.ofArray
+                    world <! SetCrashPartialCommit idSet
 
                 | [| "statereq" |] ->
                     world <! StateReq mailbox.Self

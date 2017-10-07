@@ -4,8 +4,8 @@ open Akka.FSharp
 open World
 open Network
 
-let beatrate = 100.
-let aliveThreshold = 300L
+let beatrate = 10.
+let aliveThreshold = 100L
 
 let config =
     (Akka.Configuration.ConfigurationFactory.ParseString
