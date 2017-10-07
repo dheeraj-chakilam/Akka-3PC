@@ -70,6 +70,39 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                 
                 | [| "crash" |] ->
                     System.Environment.Exit(0)
+                
+                | [| "crashAfterVote" |] ->
+                    ()
+
+                | [| "crashBeforeVote" |] ->
+                    ()
+
+                | [| "crashAfterAck" |] ->
+                    ()
+
+                | [| "crashVoteREQ"; message |] ->
+                    ()
+
+                | [| "crashPartialPreCommit"; message |] -> 
+                    let idSet =
+                        message.Trim().Split([|' '|])
+                        |> Set.ofArray
+                    world <! CrashPartialPreCommit
+
+                | [| "crashPartialCommit"; message |] ->
+                    ()
+
+                | [| "statereq" |] ->
+                    world <! StateReq mailbox.Self
+                
+                | [| "statereqreply"; message |] ->
+                    match message.Trim() with
+                    | m when m = "aborted" -> world <! StateReqReply (mailbox.Self, Aborted)
+                    | m when m = "uncertain" -> world <! StateReqReply (mailbox.Self, Uncertain)
+                    | m when m = "committable" -> world <! StateReqReply (mailbox.Self, Committable)
+                    | m when m = "committed" -> world <! StateReqReply (mailbox.Self, Committed)
+                    | _ ->
+                        failwith "Invalid statereqreply"
         
                 | _ ->
                     connection <! Tcp.Write.Create (ByteString.FromString <| sprintf "Invalid request. (%A)\n" data)) lines
