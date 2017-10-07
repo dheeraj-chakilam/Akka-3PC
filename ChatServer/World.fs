@@ -54,9 +54,7 @@ and CrashType =
 type RoomMsg =
     | Join of IActorRef
     | JoinMaster of IActorRef
-    | RequestFullState
-    | FullStateRequest of IActorRef
-    | FullState
+    | FullState of int * Map<string, string>
     | DetermineCoordinator
     | Heartbeat of string * Member * IActorRef
     | AddSong of string * string
@@ -224,6 +222,20 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                 | None -> printfn "WARNING: No master in DetermineCoordinator"
                 startCoordinatorHeartbeat { state with coordinator = Some mailbox.Self }
 
+        let sendFullState state ref =
+            printfn "Sending full state"
+            let songsString =
+                state.songList
+                |> Map.toSeq
+                |> Seq.map (fun (name,url) -> sprintf "%s,%s" name url)
+                |> String.concat "|"
+            ref <! sprintf "fullstate iter %i songs %s" state.commitIter songsString
+        
+        let sendFullStatetoObservers state =
+            state
+            |> getAlive Observer
+            |> Map.iter (fun _ ref -> sendFullState state ref)
+            state
         
         let! msg = mailbox.Receive()
         let sender = mailbox.Sender()
@@ -231,6 +243,7 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
         match msg with
         | Join ref ->
             printfn "In Join"
+            sendFullState state ref
             let newCancel =
                 match state.commitPhase with
                 | Start ->
@@ -266,23 +279,14 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                                   | Coordinator -> Some ref
                                   | _ -> state.coordinator }
         
-        | RequestFullState ->
-            // Find any alive participant/observer for their state 
-            // TODO: Change behaviour? Maybe just make every alive process send state on join
-            let aliveRef =
-                state.beatmap
-                |> Map.tryPick (fun _ (_, ref, lastMs) -> if (lastMs < aliveThreshold) then Some ref else None)
-            match aliveRef with
-            | Some ref -> ref <! "FullStateRequest"
-            | None -> failwith "Ref not found in beatmap in RequestFullState"
-
-        | FullStateRequest ref ->
-            //TODO: send more state
-            ref <! sprintf "songlist %A" (Map.toList state.songList)
-        
-        | FullState ->
-            //TODO: Handle receiving state
-            ()
+        | FullState (sourceiter, songList) ->
+            printfn "Received a fullstate message"
+            let state' = 
+                if (sourceiter > state.commitIter) then
+                    {state with songList = songList; commitIter = sourceiter}
+                else 
+                    state
+            return! loop state'
 
         | DetermineCoordinator ->
             let state' =
@@ -404,7 +408,8 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                         match state.master with
                         | Some m -> m <! "ack abort"
                         | None -> printfn "WARNING: No master in VoteReply"
-                        { state with
+                        sendFullStatetoObservers {
+                            state with
                                 commitPhase = CoordAborted
                                 commitIter = state.commitIter + 1 }
                 | _ ->
@@ -430,15 +435,17 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                                     printfn "WARNING: No master"
                                 match update with
                                 | (Add (name, url)) when sourceIter = state.commitIter ->
-                                    { state with
-                                        songList = Map.add name url state.songList
-                                        commitIter = state.commitIter + 1
-                                        commitPhase = CoordCommitted }
+                                    sendFullStatetoObservers {
+                                        state with
+                                            songList = Map.add name url state.songList
+                                            commitIter = state.commitIter + 1
+                                            commitPhase = CoordCommitted }
                                 | (Delete name) when sourceIter = state.commitIter ->
-                                    { state with
-                                        songList = Map.remove name state.songList
-                                        commitIter = state.commitIter + 1
-                                        commitPhase = CoordCommitted }
+                                    sendFullStatetoObservers {
+                                        state with
+                                            songList = Map.remove name state.songList
+                                            commitIter = state.commitIter + 1
+                                            commitPhase = CoordCommitted }
                                 | _ ->
                                     printfn "Received a VoteReplyTimeout in a later iteration"
                                     state
@@ -453,7 +460,8 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                         match state.master with
                         | Some m -> m <! "ack abort"
                         | None -> printfn "WARNING: No master in VoteReply"
-                        { state with
+                        sendFullStatetoObservers {
+                            state with
                                 commitPhase = CoordAborted
                                 commitIter = state.commitIter + 1 }
                 | s ->
@@ -485,15 +493,17 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                             | None -> printfn "WARNING: No master in AckPreCommit"
                             match decision with
                             | Add (name, url) ->
-                                { state with
-                                    songList = Map.add name url state.songList
-                                    commitIter = state.commitIter + 1
-                                    commitPhase = CoordCommitted}
+                                sendFullStatetoObservers {
+                                    state with
+                                        songList = Map.add name url state.songList
+                                        commitIter = state.commitIter + 1
+                                        commitPhase = CoordCommitted }
                             | Delete name ->
-                                { state with
-                                    songList = Map.remove name state.songList
-                                    commitIter = state.commitIter + 1
-                                    commitPhase = CoordCommitted}
+                                sendFullStatetoObservers {
+                                    state with
+                                        songList = Map.remove name state.songList
+                                        commitIter = state.commitIter + 1
+                                        commitPhase = CoordCommitted }
                         else
                             printfn "Didn't recieve all Acks yet"
                             { state with commitPhase = CoordCommittable (decision, upSet, ackSet') }
@@ -530,15 +540,17 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                             | None -> printfn "WARNING: No master in AckPreCommit"
                             match decision with
                             | Add (name, url) when state.commitIter = sourceIter ->
-                                { state with
-                                    songList = Map.add name url state.songList
-                                    commitIter = state.commitIter + 1
-                                    commitPhase = CoordCommitted }
+                                sendFullStatetoObservers {
+                                    state with
+                                        songList = Map.add name url state.songList
+                                        commitIter = state.commitIter + 1
+                                        commitPhase = CoordCommitted }
                             | Delete name when state.commitIter = sourceIter ->
-                                { state with
-                                    songList = Map.remove name state.songList
-                                    commitIter = state.commitIter + 1
-                                    commitPhase = CoordCommitted }
+                                sendFullStatetoObservers {
+                                    state with
+                                        songList = Map.remove name state.songList
+                                        commitIter = state.commitIter + 1
+                                        commitPhase = CoordCommitted }
                             | _ ->
                                 printfn "Received an AckPreCommitTimeout in a later iteration"
                                 state
@@ -562,7 +574,8 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                             m <! sprintf "coordinator %s" selfID
                             m <! "ack abort"
                         | None -> printfn "WARNING: No master in VoteReq of StateReqReply "
-                        { state with
+                        sendFullStatetoObservers {
+                            state with
                                 commitPhase = CoordAborted
                                 commitIter = state.commitIter + 1 }
                     | Uncertain ->
@@ -595,15 +608,17 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                         | None -> printfn "WARNING: No master in AckPreCommit of StateReqReply"
                         match update with
                         | Add (name, url) ->
-                            { state with
-                                songList = Map.add name url state.songList
-                                commitIter = state.commitIter + 1
-                                commitPhase = CoordCommitted}
+                            sendFullStatetoObservers 
+                                { state with
+                                    songList = Map.add name url state.songList
+                                    commitIter = state.commitIter + 1
+                                    commitPhase = CoordCommitted}
                         | Delete name ->
-                            { state with
-                                songList = Map.remove name state.songList
-                                commitIter = state.commitIter + 1
-                                commitPhase = CoordCommitted}
+                            sendFullStatetoObservers 
+                                { state with
+                                    songList = Map.remove name state.songList
+                                    commitIter = state.commitIter + 1
+                                    commitPhase = CoordCommitted}
                 | CoordCommitted ->
                     match participantState with
                     | Committable -> ref <! "commit"
@@ -633,7 +648,8 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                             m <! sprintf "coordinator %s" selfID
                             m <! "ack abort"
                         | None -> printfn "WARNING: No master in VoteReq of StateReqReplyTimeout "
-                        { state with
+                        sendFullStatetoObservers {
+                            state with
                                 commitPhase = CoordAborted
                                 commitIter = state.commitIter + 1 }
                     | CoordCommittable (update,upSet,ackSet) ->
@@ -647,15 +663,17 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                         | None ->printfn "WARNING: No master in AckPreCommit of StateReqReply"
                         match update with
                         | Add (name, url) ->
-                            { state with
-                                songList = Map.add name url state.songList
-                                commitIter = state.commitIter + 1
-                                commitPhase = CoordCommitted}
+                            sendFullStatetoObservers { 
+                                state with
+                                    songList = Map.add name url state.songList
+                                    commitIter = state.commitIter + 1
+                                    commitPhase = CoordCommitted}
                         | Delete name ->
-                            { state with
-                                songList = Map.remove name state.songList
-                                commitIter = state.commitIter + 1
-                                commitPhase = CoordCommitted}
+                            sendFullStatetoObservers {
+                                state with
+                                    songList = Map.remove name state.songList
+                                    commitIter = state.commitIter + 1
+                                    commitPhase = CoordCommitted}
                     | _ -> 
                         printfn "ERROR: Unexpected state in StateReqReplyTimeout"
                         state
@@ -689,7 +707,7 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
             // Reply to the coordinator with the vote
             match state.coordinator with
             | Some c -> c <! sprintf "votereply %s" (if vote then "yes" else "no")
-            | None -> failwith "No coordinator in VoteReq"
+            | None -> printfn "ERROR: No coordinator in VoteReq"
 
             match state.crash with
             | Some CrashAfterVote -> delayExit beatrate
@@ -797,7 +815,9 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                     | ParticipantCommitted ->
                         printfn "WARNING: Duplicate commit received"
                         state
-                    | _ -> failwith (sprintf "Invalid commit state in Decision: %O" state.commitPhase)
+                    | _ ->
+                        printfn "Invalid commit state in Decision: %O" state.commitPhase
+                        state
              
             return! loop state'
 
@@ -921,11 +941,6 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
             return! loop { state with crash = Some (CrashPartialCommit crashSet) }
     
     }
-
-    //TODO: Check if somebody is alive and ask for state
-    //TODO: Decide what the state transmission should contain
-    //scheduleOnce mailbox aliveThreshold mailbox.Self RequestFullState
-    //|> ignore
 
     //TODO: Check if DT Log exists if nobody is alive
 

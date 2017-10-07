@@ -2,9 +2,11 @@
 1 start 3 10003
 2 start 3 10004
 -1 add song1 URL1
--1 crash
+-1 crashVoteREQ
 -1 add song1 URL2
 -1 add song2 URL3
 -1 get song1
 -1 get song2
+0 start 3 10002
+0 get song2
 exit

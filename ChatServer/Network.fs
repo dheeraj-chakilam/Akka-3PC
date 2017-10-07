@@ -35,7 +35,7 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                 | [| "add"; message |] ->
                     match message.Trim().Split([|' '|], 2) with
                     | [| name; url |] -> world <! AddSong (name, url)
-                    | _ -> failwith "Invalid add song request"
+                    | _ -> printfn "ERROR: Invalid add song request"
                 
                 | [| "get"; message |] ->
                     world <! GetSong (message.Trim())
@@ -47,14 +47,14 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                     match message.Trim().Split([|' '|]) with
                     | [| "add"; name; url |] -> world <! VoteReq (Add (name, url))
                     | [| "delete"; name |] -> world <! VoteReq (Delete name)
-                    | _ -> failwith "Invalid votereq"
+                    | _ -> printfn "ERROR: Invalid votereq"
 
                 | [| "votereply"; message |] -> 
                     match message.Trim() with
                     | m when m = "yes" -> world <! VoteReply (Yes, mailbox.Self)
                     | m when m = "no" -> world <! VoteReply (No, mailbox.Self)
                     | _ ->
-                        failwith "Invalid votereply"
+                        printfn "ERROR: Invalid votereply"
                 
                 | [| "precommit" |] ->
                     world <! PreCommit
@@ -117,8 +117,23 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                     | m when m = "committable" -> world <! StateReqReply (mailbox.Self, Committable)
                     | m when m = "committed" -> world <! StateReqReply (mailbox.Self, Committed)
                     | _ ->
-                        failwith "Invalid statereqreply"
-        
+                        printfn "ERROR: Invalid statereqreply: %s" message
+                
+                | [| "fullstate"; message |] ->
+                    printfn "Received fullstate network"
+                    match message.Trim().Split([|' '|]) with
+                    | [| "iter" ; commitIter ; "songs" ; songlist |] ->
+                        let songMap =
+                            songlist.Trim().Split([|'|'|])
+                            |> Array.fold (fun state pair ->
+                                match pair.Trim().Split([|','|]) with
+                                | [| name ; url |] -> Map.add name url state
+                                | _ -> state) Map.empty
+                        world <! FullState (int commitIter, songMap)
+                    | [| "iter" ; commitIter ; "songs"|] ->
+                        world <! FullState (int commitIter, Map.empty)
+                    | _ ->
+                        printfn "ERROR: Invalid fullstate: %s" message
                 | _ ->
                     connection <! Tcp.Write.Create (ByteString.FromString <| sprintf "Invalid request. (%A)\n" data)) lines
     
