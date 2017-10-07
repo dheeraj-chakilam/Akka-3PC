@@ -1,0 +1,31 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>Akka.FSharp</id>
+    <version>1.2.3</version>
+    <title>Akka.FSharp</title>
+    <authors>Akka.NET Team</authors>
+    <owners>Akka.NET Team</owners>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <licenseUrl>https://github.com/akkadotnet/akka.net/blob/master/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/akkadotnet/akka.net</projectUrl>
+    <iconUrl>http://getakka.net/images/AkkaNetLogo.Normal.png</iconUrl>
+    <description>F# API support for Akka.NET</description>
+    <releaseNotes>Maintenance Release for Akka.NET 1.2**
+Resolves a bug introduced in Akka.NET 1.2.2 that caused Akka.Remote to not terminate properly under some conditions during `ActorSystem.Terminate`.
+[See the full set of Akka.NET 1.2.3 fixes here](https://github.com/akkadotnet/akka.net/milestone/18).
+| COMMITS | LOC+ | LOC- | AUTHOR |
+| --- | --- | --- | --- |
+| 3 | 46 | 63 | Aaron Stannard |</releaseNotes>
+    <copyright>Copyright © 2013-2017 Akka.NET Team</copyright>
+    <tags>akka actors actor model Akka concurrency F# Fsharp</tags>
+    <dependencies>
+      <dependency id="FSharp.Core" version="4.1.17" />
+      <dependency id="FsPickler" version="3.2.0" />
+      <dependency id="FSPowerPack.Core.Community" version="3.0.0" />
+      <dependency id="FSPowerPack.Linq.Community" version="3.0.0" />
+      <dependency id="System.ValueTuple" version="4.3.0" />
+      <dependency id="Akka" version="1.2.3" />
+    </dependencies>
+  </metadata>
+</package>
