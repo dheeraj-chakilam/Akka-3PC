@@ -3,6 +3,11 @@
 ###############################################################################
 * text=lf
 * text eol=lf
+*.fs eol=lf
+*.fsproj eol=lf
+
+*.dll binary
+*.exe binary
 ###############################################################################
 # Set default behavior for command prompt diff.
 #
