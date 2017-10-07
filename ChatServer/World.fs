@@ -142,7 +142,7 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
             startHeartbeat (sprintf "participant %s" selfID) state
 
         let startObserverHeartbeat state =
-            startHeartbeat (sprintf "observer %s" selfID) { state with commitPhase = Start }
+            startHeartbeat (sprintf "observer %s" selfID) state
         
         let filterAlive map =
             map
@@ -702,9 +702,12 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
                     { state with
                         commitPhase = ParticipantInitCommit (update, upSet) }
                 else
-                    startObserverHeartbeat {
-                        state with
-                            commitPhase = ParticipantAborted }
+                    // Vote no
+                    // TODO: Fix election protocol
+                    setTimeout <| ObserverCheckCoordinator (state.commitIter + 1)
+                    { state with
+                            commitPhase = ParticipantAborted
+                            commitIter = state.commitIter + 1}
             // Start heartbeating as a participant
             return! loop state'
 
@@ -803,11 +806,11 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
             let state' =
                 if state.commitIter = sourceIter then
                     initiateElectionProtocol state
-                else if state.commitIter = sourceIter + 1 then
+                else if state.commitIter = sourceIter + 1 && state.commitPhase = ParticipantCommitted then
                     // Moved on to the next iteration
                     // Check if coordinator has died after sending us a commit
                     setTimeout <| ObserverCheckCoordinator state.commitIter
-                    startObserverHeartbeat state
+                    startObserverHeartbeat { state with commitPhase = Start }
                 else
                     state
             return! loop state'
@@ -815,24 +818,31 @@ let room selfID beatrate aliveThreshold timeout (mailbox: Actor<RoomMsg>) =
         | ObserverCheckCoordinator sourceiter ->
             //printfn "Received ObserverCheckCoordinator"
             let state =
-                if (state.commitPhase = Start && sourceiter = state.commitIter) then
-                    match state.coordinator with
-                    | Some c ->
-                        //printfn "Expect the coordinator to be %O" c
-                        let isCoordinatorDead =
-                            getAliveMap state
-                            |> Map.exists (fun id ref -> ref = c)
-                            |> not
-                        //printfn "isCoordinatorDead - %b" isCoordinatorDead
-                        if isCoordinatorDead then
-                            initiateObserverElectionProtocol state
-                        else
-                            setTimeout <| ObserverCheckCoordinator state.commitIter
-                            state
-                    | None ->
-                        //printfn "ERROR: No coordinator in ObserverCheckHeartbeat"
+                match state.commitPhase, state.coordinator with
+                | ParticipantAborted, Some c when state.commitIter = sourceiter ->
+                    let isCoordinatorAlive =
+                        getAliveMap state
+                        |> Map.exists (fun id ref -> ref = c)
+                    if isCoordinatorAlive then
+                        startObserverHeartbeat { state with commitPhase = Start }
+                    else 
                         state
-                else
+                | Start, Some c when sourceiter = state.commitIter ->
+                    //printfn "Expect the coordinator to be %O" c
+                    let isCoordinatorDead =
+                        getAliveMap state
+                        |> Map.exists (fun id ref -> ref = c)
+                        |> not
+                    //printfn "isCoordinatorDead - %b" isCoordinatorDead
+                    if isCoordinatorDead then
+                        initiateObserverElectionProtocol state
+                    else
+                        setTimeout <| ObserverCheckCoordinator state.commitIter
+                        state
+                | _, None ->
+                    //printfn "ERROR: No coordinator in ObserverCheckHeartbeat"
+                    state
+                | _ ->
                     state
             return! loop state
        

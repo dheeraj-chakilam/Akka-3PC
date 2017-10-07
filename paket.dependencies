@@ -1,8 +1,1 @@
 source https://www.nuget.org/api/v2
-
-nuget Akka.FSharp
-nuget FSPowerPack.Core.Community
-nuget FSPowerPack.Linq.Community
-nuget Newtonsoft.Json
-nuget System.Collections.Immutable
-nuget System.ValueTuple

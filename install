@@ -13,3 +13,8 @@ sudo apt-get install fsharp
 
 # Get paket
 wget -P .paket https://github.com/fsprojects/Paket/releases/download/5.113.0/paket.exe
+mono .paket/paket.exe init
+mono .paket/paket.exe init
+mono .paket/paket.exe install
+mono .paket/paket.exe install
+mono .paket/paket.exe install

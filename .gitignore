@@ -4,5 +4,6 @@
 docs/build/
 test_output/
 results1
-ChatServer/bin/*
-ChatServer/obj/*
+ChatServer/bin/
+ChatServer/obj/
+packages/
