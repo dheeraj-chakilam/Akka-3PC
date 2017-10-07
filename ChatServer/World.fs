@@ -30,7 +30,7 @@ and CommitState =
     | CoordCommitted
     | CoordAborted
     | ParticipantInitCommit of Update * Map<string, IActorRef>
-    | ParticipantCommitable of Update * Set<IActorRef>
+    | ParticipantCommitable of Update * Map<string, IActorRef>
     | ParticipantCommitted
     | ParticipantAborted
 
@@ -113,9 +113,9 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             startHeartbeat (sprintf "observer %s" selfID) state
         
         // Get a map (id, ref) of all the alive processes
-        let getAliveMap () =
+        let getAliveMap state =
             state.beatmap
-            |> Map.filter (fun _ (_,_,ms) -> sw.ElapsedMilliseconds - ms < aliveThreshold)
+            |> Map.filter (fun _ (_,_,ms) -> (sw.ElapsedMilliseconds - ms) < aliveThreshold)
             |> Map.map (fun id (_,ref,_) -> ref)
         
         // Sends a message to self after the timeout threshold
@@ -123,6 +123,14 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             scheduleOnce mailbox aliveThreshold mailbox.Self message
             |> ignore
 
+        let runElectionProtocol state =
+            // Find a new coordinator
+            let (newCoordId,newCoordRef) =
+                getAliveMap state
+                |> Map.fold (fun (lowest, _) id ref -> if (int id) < (int lowest) then (id, ref) else (lowest, ref)) (selfID, mailbox.Self)
+            if newCoordId <> selfID then
+
+        
         let! msg = mailbox.Receive()
         let sender = mailbox.Sender()
 
@@ -217,7 +225,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                 else
                     printfn "Trying to get alive map"
                     // Get a snapshot of the upSet
-                    let upSet = getAliveMap ()
+                    let upSet = getAliveMap state
                     printfn "The upSet is %O" upSet
             
                     // Initiate 3PC with all alive participants by sending VoteReq
@@ -237,7 +245,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             // Current process is the coordinator
             // Get a snapshot of the upSet
             let state' =
-                let upSet = getAliveMap ()
+                let upSet = getAliveMap state
                 let upListIds =
                     upSet
                     |> Map.toList
@@ -265,7 +273,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                         printfn "Received a yes vote"
                         let voteSet' = Set.add ref voteSet
                         // Check if we've received all votes
-                        if Set.count voteSet = Map.count upSet then
+                        if Set.count voteSet' = Map.count upSet then
                             printfn "Received all votes"
                             upSet
                             |> Map.iter (fun _ ref -> ref <! "precommit")
@@ -298,7 +306,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             printfn "In VoteReplyTimeout"
             let state' =
                 match state.commitState with
-                | CoordInitCommit (update, upSet, voteSet) when sourceIter = state.commitIter ->
+                | CoordInitCommit (update, upSet, voteSet) ->
                     if Set.count voteSet = Map.count upSet then
                         printfn "Since there is no participant, just decide commit for self"
                         if (Map.count upSet) = 0 then
@@ -311,16 +319,19 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                                 | None ->
                                     printfn "WARNING: No master"
                                 match update with
-                                | (Add (name, url)) ->
+                                | (Add (name, url)) when sourceIter = state.commitIter ->
                                     { state with
                                         songList = Map.add name url state.songList
                                         commitIter = state.commitIter + 1
                                         commitState = CoordCommitted }
-                                | (Delete name) ->
+                                | (Delete name) when sourceIter = state.commitIter ->
                                     { state with
                                         songList = Map.remove name state.songList
                                         commitIter = state.commitIter + 1
                                         commitState = CoordCommitted }
+                                | _ ->
+                                    printfn "Received a VoteReplyTimeout in a later iteration"
+                                    state
                         else
                             printfn "In VoteReplyTimeout but have already received all votes."
                             state
@@ -336,8 +347,8 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                             state with
                                 commitState = CoordAborted
                                 commitIter = state.commitIter + 1 }
-                | _ ->
-                    printfn "WARNING: Invalid state in VoteReplyTimeout -> upSet = 0"
+                | s ->
+                    printfn "WARNING: Invalid state in VoteReplyTimeout: %O" s
                     state
             return! loop state'
         
@@ -404,6 +415,9 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                                     songList = Map.remove name state.songList
                                     commitIter = state.commitIter + 1
                                     commitState = CoordCommitted }
+                            | _ ->
+                                printfn "Received an AckPreCommitTimeout in a later iteration"
+                                state
                 | _ ->
                     printfn "Warning: Invalid state in AckPreCommitTimeout"
                     state
@@ -412,7 +426,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
         | VoteReq update ->
             printfn "In VoteReq on iteration %i" state.commitIter
             let upSet =
-                getAliveMap ()
+                getAliveMap state
             // TODO: should votereq contain the coordinator ref?
             // Decide vote according to the rule
             let vote =
@@ -432,8 +446,7 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                     // Wait for precommit or timeout
                     setTimeout <| PreCommitTimeout state.commitIter
                     { state with
-                        commitState = ParticipantInitCommit update
-                        upSet = upSet }
+                        commitState = ParticipantInitCommit (update, upSet) }
                 else
                     startObserverHeartbeat {
                         state with
@@ -448,11 +461,10 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
             | None -> failwith "No Coordinator in PreCommit"
 
             match state.commitState with
-            | ParticipantInitCommit update ->
+            | ParticipantInitCommit (update, upSet) ->
                 let state' = {
                     state with
-                        commitState = ParticipantCommitable update
-                        upSet = state.upSet}
+                        commitState = ParticipantCommitable (update, upSet)}
             
                 // Wait for commit or timeout
                 setTimeout <| CommitTimeout state.commitIter
@@ -464,6 +476,18 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
         | PreCommitTimeout sourceIter ->
             printfn "In PreCommitTimeout from iteration %i" sourceIter
             // The coordinator may have died
+            match state.coordinator with
+            | Some c -> 
+                let isCoordinatorDead =
+                    getAliveMap state
+                    |> Map.exists (fun id ref -> ref = c)
+                    |> not
+                if isCoordinatorDead then
+                    runElectionProtocol state
+                else
+                    state
+            | None ->
+                printfn "WARNING: Received a VoteRequest without a coordinator"
             return! loop state
 
         | Decision decision ->
@@ -475,27 +499,24 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
                     startObserverHeartbeat {
                         state with
                             commitState = ParticipantAborted
-                            upSet = Map.empty
                             commitIter = state.commitIter + 1 }
                 | Commit ->
                     printfn "In Decision -> Commit"
                     match state.commitState with
-                    | ParticipantCommitable (Add (name, url)) ->
+                    | ParticipantCommitable (Add (name, url), upSet) ->
                         printfn "In Decision -> Commit -> ParticipantCommitable Add"
                         startObserverHeartbeat {
                             state with
                                 songList = Map.add name url state.songList
                                 commitIter = state.commitIter + 1
-                                commitState = ParticipantCommitted
-                                upSet = Map.empty }
-                    | ParticipantCommitable (Delete name) ->
+                                commitState = ParticipantCommitted }
+                    | ParticipantCommitable (Delete name, upSet) ->
                         printfn "In Decision -> Commit -> ParticipantCommitable Delete"
                         startObserverHeartbeat {
                             state with
                                 songList = Map.remove name state.songList
                                 commitIter = state.commitIter + 1
-                                commitState = ParticipantCommitted
-                                upSet = Map.empty }
+                                commitState = ParticipantCommitted }
                     | _ -> failwith (sprintf "Invalid commit state in Decision: %O" state.commitState)
              
             return! loop state'
@@ -544,7 +565,4 @@ let room selfID beatrate aliveThreshold (mailbox: Actor<RoomMsg>) =
         songList = Map.empty ;
         commitState = Start ;
         commitIter = 1 ;
-        beatCancels = [] ;
-        upSet = Map.empty ;
-        voteSet = Set.empty ;
-        ackSet = Set.empty }
+        beatCancels = [] }
