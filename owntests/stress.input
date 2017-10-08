@@ -5,7 +5,7 @@
 -1 get song1
 3 start 10 10003
 4 start 10 10004
--1 crashVoteREQ 3
+-1 crashVoteREQ 1
 -1 add song2 URL2
 1 get song2
 2 crashAfterVote
@@ -16,7 +16,7 @@
 0 start 10 10000
 0 get song1
 0 get song2
--1 crash
+0 crash
 -1 add song5 URL5
 0 get song5
 exit

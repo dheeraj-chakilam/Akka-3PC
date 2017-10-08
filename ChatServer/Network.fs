@@ -120,7 +120,7 @@ let handler world serverType selfID connection (mailbox: Actor<obj>) =
                         printfn "ERROR: Invalid statereqreply: %s" message
                 
                 | [| "fullstate"; message |] ->
-                    printfn "Received fullstate network"
+                    printfn "Received a fullstate in network"
                     match message.Trim().Split([|' '|]) with
                     | [| "iter" ; commitIter ; "songs" ; songlist |] ->
                         let songMap =
