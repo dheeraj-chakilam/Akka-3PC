@@ -1,1 +1,10 @@
 source https://www.nuget.org/api/v2
+
+nuget Akka 1.2.3
+nuget Akka.FSharp 1.2.3
+nuget FsPickler 3.2.0
+nuget FSPowerPack.Core.Community 3.0.0.0
+nuget FSPowerPack.Linq.Community 3.0.0.0
+nuget Newtonsoft.Json 9.0.1
+nuget System.Collections.Immutable 1.4.0
+nuget System.ValueTuple 4.4.0

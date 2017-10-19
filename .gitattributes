@@ -1,6 +1,7 @@
 ###############################################################################
 # Set default behavior to automatically normalize line endings.
 ###############################################################################
+packages/* binary
 * text=lf
 * text eol=lf
 *.fs eol=lf

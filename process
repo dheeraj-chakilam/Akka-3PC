@@ -1,2 +1,2 @@
 #!/bin/bash
-xterm -e "mono ChatServer/bin/Debug/ChatServer.exe $1 $2 $3"
+xterm -e "mono ChatServer/bin/Debug/chatserver.exe $1 $2 $3"
